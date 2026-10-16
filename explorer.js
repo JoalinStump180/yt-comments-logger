@@ -81,6 +81,40 @@ function videoIdFromStoredUrl2(url) {
     async function deleteRecord(id) {
       return withStore("readwrite", (store) => store.delete(id));
     }
+    // Fast path for startup: fetch only the newest records from IndexedDB.
+    // The full getAll() path below remains available for complete search and legacy fallbacks.
+    async function getRecent(limit = PAGE) {
+      try {
+        const db = await openDb();
+        const recent = await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE, "readonly");
+          const store = tx.objectStore(STORE);
+          let source = store;
+          try {
+            if (store.indexNames.contains("byCreatedAt")) source = store.index("byCreatedAt");
+          } catch (_) {}
+          const req = source.openCursor(null, "prev");
+          const out = [];
+          req.onsuccess = () => {
+            const cursor = req.result;
+            if (!cursor || out.length >= limit) {
+              resolve(out);
+              return;
+            }
+            out.push(cursor.value);
+            cursor.continue();
+          };
+          req.onerror = () => reject(req.error);
+          tx.onerror = () => reject(tx.error);
+        });
+        if (recent.length >= limit) return recent.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      } catch (_) {}
+
+      // Fallback for old databases, storage-cache-only installs, or an empty index.
+      const all = await getAll();
+      return all.slice(0, limit);
+    }
+
     async function getAll() {
       try {
         const db = await openDb();
@@ -288,24 +322,44 @@ function videoIdFromStoredUrl2(url) {
       }
     }
 
+    let loadRun = 0;
     async function loadLazy() {
+      const run = ++loadRun;
       rows = [];
       matched = [];
       shown = 0;
       $("tbody").innerHTML = "";
-      setSeek(0, "Loading 0%");
+      setSeek(0, "Loading recent history…");
+      $("empty").hidden = true;
       if (!location.protocol.startsWith("chrome") && !location.protocol.startsWith("edge") && !location.protocol.startsWith("extension")) {
         $("status").textContent = "Wrong page: open explorer from the extension popup, not a file:// path.";
       }
       try {
-        await loadCommentsIndex();
-        rows = await getAll();
+        // Show the first screen as soon as the small newest-first query completes.
+        const recent = await getRecent(PAGE);
+        if (run !== loadRun) return;
+        rows = recent;
+        seek($("q").value.trim().toLowerCase());
+        setSeek(0, "Recent rows · loading full history…");
+        $("status").textContent = recent.length
+          ? (shown + " of " + matched.length + " recent rows shown · loading full history…")
+          : "Checking history…";
+
+        // These potentially expensive operations no longer block the first visible rows.
+        const fullLoad = getAll();
+        const commentsLoad = loadCommentsIndex().catch(() => {});
+        const all = await fullLoad;
+        if (run !== loadRun) return;
+        rows = all;
         setSeek(100, "Loaded " + rows.length);
         seek($("q").value.trim().toLowerCase());
         $("status").textContent = rows.length
           ? (shown + " of " + matched.length + " shown · loaded " + rows.length)
           : "0 items. Popup has data? Reload extension, visit a page, then click Refresh.";
+        // Let comment data finish independently; don't hold up URL history display.
+        void commentsLoad;
       } catch (err) {
+        if (run !== loadRun) return;
         $("status").textContent = "Load error: " + err;
         $("empty").hidden = false;
         $("empty").textContent = String(err);

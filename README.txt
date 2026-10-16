@@ -11,12 +11,12 @@ YouTube rule
 ------------
 These two visits become one stored URL:
 
-https://www.youtube.com/watch?v=4Y2cMOTZvuo&t=45s&todaydate=20260928$$
-https://www.youtube.com/watch?v=4Y2cMOTZvuo&t=132s&todaydate=20260928$$
+https://www.youtube.com/watch?v=<YOUTUBEVIDEOID>&t=45s&todaydate=20260928$$
+https://www.youtube.com/watch?v=<YOUTUBEVIDEOID>&t=132s&todaydate=20260928$$
 
 stored as:
 
-https://www.youtube.com/watch?v=4Y2cMOTZvuo&todaydate=20260928$$
+https://www.youtube.com/watch?v=<YOUTUBEVIDEOID>&todaydate=20260928$$
 
 &t= is dropped. v and todaydate are kept.
 If todaydate is missing, the logger adds today's date as YYYYMMDD$$.
