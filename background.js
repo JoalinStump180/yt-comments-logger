@@ -202,7 +202,7 @@ async function logUrlImmediately(rawUrl) {
     createdAt: Date.now()
   });
   
-  await syncCache();
+//  await syncCache();
   console.log("[visit-url-logger] Instant logged:", key);
 }
 
@@ -233,21 +233,32 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
   if (!title) return;
 
   // Find the record created on beforeNavigate and update its title
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readwrite");
-  const store = tx.objectStore(STORE);
+//  const db = await openDb();
+  //const tx = db.transaction(STORE, "readwrite");
+ // const store = tx.objectStore(STORE);
   
-  const all = await getAll();
-  const existing = all
-    .filter(r => r.url === key)
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  //const all = await getAll();
+ // const existing = all
+   // .filter(r => r.url === key)
+  //  .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
 
-  if (existing) {
-    existing.title = ""+title;
-    await putRecord(existing);
-    await syncCache();
-    console.log("[visit-url-logger] Updated title for:", key, "->", title);
-  }
+  //if (existing) {
+   // existing.title = ""+title;
+    //await putRecord(existing);
+    
+          await putRecord({
+        date: message.date,
+        time: message.time,
+        url: key||"",
+        title: title||"",
+        comments: "Captured via link click",
+        createdAt: Date.now()
+      });
+    
+    
+   // await syncCache();
+    //console.log("[visit-url-logger] Updated title for:", key, "->", title);
+  //}
 });
 
 
@@ -277,7 +288,7 @@ async function addUrl(url, title) {
         //if (dup) return false;
         const { date, time } = nowParts();
         await putRecord({ date, time, url, title, comments: "", createdAt: Date.now() });
-        await syncCache();
+        //await syncCache();
       lasttitle = title;
        
         return false;
@@ -295,7 +306,7 @@ async function addUrl(url, title) {
         //if (dup) return false;
         const { date, time } = nowParts();
         await putRecord({ date, time, url, title, comments: "", createdAt: Date.now() });
-        await syncCache();
+        //await syncCache();
        
       lasturl = url;
         return false;
@@ -321,7 +332,7 @@ async function addUrl(url, title) {
 
  
 
-syncCache().catch(console.error);
+//syncCache().catch(console.error);
 
 
 
@@ -343,7 +354,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       
       // Sync cache if needed
-      await syncCache();
+     // await syncCache();
     });
   }
 });
@@ -391,7 +402,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       createdAt: Date.now()
     });
 
-    await syncCache();
+    //await syncCache();
 
     console.log("[Background] Saved successfully:", url);
     sendResponse({ ok: true, url });

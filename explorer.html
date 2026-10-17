@@ -14,19 +14,34 @@
       flex-direction: column;
     }
     .toolbar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
+      display: block;
       padding: 6px 8px;
       background: #f3f3f3;
       border-bottom: 1px solid #c8c8c8;
     }
+    .toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+    .toolbar-row + .toolbar-row { margin-top: 6px; }
     .toolbar input[type="search"] {
       flex: 1;
       min-width: 160px;
       height: 24px;
+      box-sizing: border-box;
       border: 1px solid #adadad;
       padding: 0 8px;
+    }
+    .toolbar select {
+      height: 24px;
+      max-width: 260px;
+      min-width: 170px;
+      border: 1px solid #adadad;
+      background: #fff;
+      font: inherit;
     }
     .toolbar button, .path {
       height: 24px;
@@ -148,17 +163,30 @@
 </head>
 <body>
   <div class="toolbar">
-    <span class="path">extension:\visitCommentLog\records</span>
-    <input id="q" type="search" placeholder="Search date, title, url, comments..." />
-    <span id="seek" style="min-width:110px;color:#555;">Seek 0%</span>
-    <label style="white-space:nowrap;"><input type="checkbox" id="includeComments" /> Including comments: <span id="includeCommentsLabel">off</span></label>
-    <label style="white-space:nowrap;"><input type="checkbox" id="dedupeCommentId" /> Comment ID once (first row): <span id="dedupeCommentIdLabel">off</span></label>
-    <button id="reloadBtn">Refresh</button>
-    <button id="newBtn">New</button>
-    <button id="delBtn">Delete</button>
-    <button id="exportBtn">Export</button>
-    <button id="importBtn">Import</button>
-    <input id="fileInput" type="file" accept="application/json" hidden />
+    <div class="toolbar-row toolbar-search-row">
+      <span class="path">extension:\visitCommentLog\records</span>
+      <input id="q" type="search" placeholder="Search date, title, url, comments..." />
+      <select id="recentSearches" aria-label="Recent search patterns" title="Choose a recent search pattern">
+        <option value="">Recent searches (0/40)</option>
+      </select>
+      <span id="seek" style="min-width:110px;color:#555;">Seek 0%</span>
+    </div>
+    <div class="toolbar-row toolbar-controls-row">
+      <label style="white-space:nowrap;"><input type="checkbox" id="searchInDateTime" /> in datetime</label>
+      <label style="white-space:nowrap;"><input type="checkbox" id="searchInUrl" checked /> in url</label>
+      <label style="white-space:nowrap;"><input type="checkbox" id="searchInTitle" checked /> in title</label>
+      <label style="white-space:nowrap;"><input type="checkbox" id="includeComments" /> Including comments: <span id="includeCommentsLabel">off</span></label>
+      <label style="white-space:nowrap;"><input type="checkbox" id="dedupeCommentId" /> Comment ID once (first row): <span id="dedupeCommentIdLabel">off</span></label>
+      <label style="white-space:nowrap;"><input type="checkbox" id="dedupeTitleDaily" /> Same title once each day: <span id="dedupeTitleDailyLabel">off</span></label>
+      <button id="reloadBtn">Refresh</button>
+      <button id="newBtn">New</button>
+      <button id="delBtn">Delete</button>
+      <button id="exportBtn">Export</button>
+      <button id="exportCommentsBtn">Export Comments</button>
+      <button id="importBtn">Import History</button>
+      <button id="importCommentsBtn">Import Comments</button>
+      <input id="fileInput" type="file" accept="application/json" hidden />
+    </div>
   </div>
   <div class="split">
     <aside class="side">

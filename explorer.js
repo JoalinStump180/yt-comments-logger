@@ -1,4 +1,4 @@
-﻿const $ = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id);
     let rows = [];
     let filter = "all";
     let selectedId = null;
@@ -12,6 +12,7 @@
 
     let includeComments = false;
     let dedupeCommentId = false;
+    let dedupeTitleDaily = false;
     const firstRowByCommentId = new Map();
     const openVideos = new Set();
     const commentsByVideo = new Map();
@@ -149,46 +150,102 @@ function videoIdFromStoredUrl2(url) {
       $("seek").textContent = label || ("Seek " + pct + "%");
     }
 
-    // Split the search box into tokens. "a big apple" stays one token; spaces split the rest.
+    // Split the search box into tokens. Quoted phrases stay together.
+    // A leading hyphen marks an exclusion: -dog or -"a big dog".
     function parseQuery(q) {
       const s = String(q || "").trim();
       if (!s) return [];
       const tokens = [];
-      const re = /"([^"]*)"|(\S+)/g;
+      const re = /(-?)"([^"]*)"|(\S+)/g;
       let m;
       while ((m = re.exec(s))) {
-        const tok = (m[1] != null ? m[1] : m[2]).trim().toLowerCase();
-        if (tok) tokens.push(tok);
+        let negative;
+        let text;
+        if (m[2] != null) {
+          negative = m[1] === "-";
+          text = m[2].trim();
+        } else {
+          const raw = m[3];
+          negative = raw.startsWith("-") && raw.length > 1;
+          text = (negative ? raw.slice(1) : raw).trim();
+        }
+        text = text.toLowerCase();
+        if (text) tokens.push({ text, negative });
       }
       return tokens;
     }
-    // True only if every token appears in hay (AND).
+    // Positive tokens use AND; any matching negative token excludes the item.
+    // A query containing only negative tokens is valid and matches items that
+    // contain none of the excluded substrings.
     function hayHasAll(hay, tokens) {
       if (!tokens.length) return true;
       const h = String(hay || "").toLowerCase();
-      return tokens.every((t) => h.includes(t));
+      if (tokens.some((t) => t.negative && h.includes(t.text))) return false;
+      return tokens.filter((t) => !t.negative).every((t) => h.includes(t.text));
     }
-    // One searchable string for a visit row (date, time, title, url, id).
+    // Search-range switches: datetime is opt-in; URL and title are opt-out.
+    let searchInDateTime = false;
+    let searchInUrl = true;
+    let searchInTitle = true;
+
+    function historyDateTimeHay(r) {
+      return [r.date, r.time].filter(Boolean).join(" ");
+    }
+    // History notes/comments remain searchable; the three switches gate only
+    // their corresponding fields, not the visible columns or filtering sidebar.
     function pageHay(r) {
-      return [r.date, r.time, r.title, r.url, r.comments, String(r.id)].join(" ");
+      return [
+        searchInDateTime ? historyDateTimeHay(r) : "",
+        searchInTitle ? r.title : "",
+        searchInUrl ? r.url : "",
+        r.comments,
+        String(r.id)
+      ].join(" ");
     }
-    // One searchable string for one YouTube comment.
-    function commentHay(c) {
-      return [c.commentId, c.text, c.author, c.handle, c.channelId, c.publishedTime, String(c.localIndex)].join(" ");
+    function videoRowForId(videoId, preferredRow) {
+      if (preferredRow && videoIdFromStoredUrl(preferredRow.url) === videoId) return preferredRow;
+      return rows.find((r) => videoIdFromStoredUrl(r.url) === videoId) || null;
+    }
+    function commentDateTimeHay(c) {
+      let created = "";
+      if (typeof c.createdAt === "number" && Number.isFinite(c.createdAt)) {
+        created = new Date(c.createdAt).toLocaleString();
+      } else if (c.createdAt) {
+        created = String(c.createdAt);
+      }
+      return [c.publishedTime, created].filter(Boolean).join(" ");
+    }
+    // URL/title metadata belongs to the video, so it is searchable from each
+    // associated comment as well as from the history row itself.
+    function commentHay(c, preferredRow) {
+      const videoId = String(c.videoId || "");
+      const videoRow = videoRowForId(videoId, preferredRow);
+      const videoUrl = videoRow ? videoRow.url : (videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` : "");
+      return [
+        c.commentId, c.text, c.author, c.handle, c.channelId, String(c.localIndex),
+        searchInDateTime ? commentDateTimeHay(c) : "",
+        searchInUrl ? [videoUrl, c.sourceUrl].join(" ") : "",
+        searchInTitle && videoRow ? videoRow.title : ""
+      ].join(" ");
     }
     function pageHits(r, q) {
       return hayHasAll(pageHay(r), parseQuery(q));
     }
-    function commentHits(list, q) {
+    function commentHits(list, q, preferredRow) {
       const tokens = parseQuery(q);
-      return (list || []).filter((c) => hayHasAll(commentHay(c), tokens));
+      return (list || []).filter((c) => hayHasAll(commentHay(c, preferredRow), tokens));
     }
-    function commentHitsAny(list, q) {
+    function commentHitsAny(list, q, preferredRow) {
       const tokens = parseQuery(q);
       if (!tokens.length) return [];
+      const positive = tokens.filter((t) => !t.negative);
+      const negative = tokens.filter((t) => t.negative);
       return (list || []).filter((c) => {
-        const h = commentHay(c).toLowerCase();
-        return tokens.some((t) => h.includes(t));
+        const h = commentHay(c, preferredRow).toLowerCase();
+        if (negative.some((t) => h.includes(t.text))) return false;
+        // For negative-only searches, all comments that pass the exclusions
+        // are valid hits. Otherwise this helper finds partial positive hits.
+        return positive.length === 0 || positive.some((t) => h.includes(t.text));
       });
     }
     function matchRow(r, q) {
@@ -203,9 +260,9 @@ function videoIdFromStoredUrl2(url) {
       if (pageHits(r, q)) return true;
       if (!includeComments) return false;
       const vid = videoIdFromStoredUrl(r.url);
-      const list = commentsByVideo.get(vid) || [];
-      if (commentHits(list, q).length) return true;
-      return hayHasAll(pageHay(r) + " " + list.map(commentHay).join(" "), parseQuery(q));
+      const list = activeComments(vid);
+      if (commentHits(list, q, r).length) return true;
+      return hayHasAll(pageHay(r) + " " + list.map((c) => commentHay(c, r)).join(" "), parseQuery(q));
     }
 
     function activeComments(vid) {
@@ -233,12 +290,48 @@ function videoIdFromStoredUrl2(url) {
         }
       }
     }
+
+    // Keep only the newest row for each canonicalized non-empty title on each date.
+    // Canonicalization removes every "time" + 6-digit field (e.g. time123456).
+    // This only changes the displayed/matched list; stored history rows are untouched.
+    function onlyNewestTitlePerDay(list) {
+      if (!dedupeTitleDaily) return list;
+      const winnerByKey = new Map();
+      const dateTimeValue = (r) => {
+        const value = Date.parse(`${String(r.date || "").trim()}T${String(r.time || "00:00").trim()}`);
+        return Number.isFinite(value) ? value : -Infinity;
+      };
+      const canonicalTitle = (r) => String(r.title || "").trim().replace(/time[0-9]{6}/gi, "").trim();
+      const isNewer = (candidate, current) => {
+        const a = dateTimeValue(candidate);
+        const b = dateTimeValue(current);
+        if (a !== b) return a > b;
+        return Number(candidate.id) > Number(current.id);
+      };
+      for (const r of list || []) {
+        const originalTitle = String(r.title || "").trim();
+        // Truly empty titles are common for manually-created rows; don't collapse them.
+        if (!originalTitle) continue;
+        const title = canonicalTitle(r);
+        const key = JSON.stringify([String(r.date || ""), title]);
+        const current = winnerByKey.get(key);
+        if (!current || isNewer(r, current)) winnerByKey.set(key, r);
+      }
+      const winners = new Set(winnerByKey.values());
+      return (list || []).filter((r) => {
+        const originalTitle = String(r.title || "").trim();
+        return !originalTitle || winners.has(r);
+      });
+    }
+
     function rowHtml(r) {
       const vid = videoIdFromStoredUrl(r.url);
       const q = $("q").value.trim().toLowerCase();
+      // Always obtain comments for manual unfolding. includeComments gates
+      // searching and automatic expansion only; it does not hide comment data.
       const all = onlyFirstRow(activeComments(vid), r.id);
-      const fullHits = q && includeComments ? commentHits(all, q) : [];
-      const partHits = q && includeComments ? commentHitsAny(all, q) : [];
+      const fullHits = q && includeComments ? commentHits(all, q, r) : [];
+      const partHits = q && includeComments ? commentHitsAny(all, q, r) : [];
       const hits = fullHits.length ? fullHits : partHits;
       const auto = includeComments && !!q && hits.length > 0;
       const show = vid && (openVideos.has(vid) || auto || filter === "recycle");
@@ -280,6 +373,7 @@ function videoIdFromStoredUrl2(url) {
 
     function seek(q) {
       matched = rows.filter((r) => matchRow(r, q));
+      matched = onlyNewestTitlePerDay(matched);
       rebuildFirstRowMap();
       setSeek(100, "Seek 100% · " + matched.length);
       renderSlice(true);
@@ -348,6 +442,13 @@ function videoIdFromStoredUrl2(url) {
         // These potentially expensive operations no longer block the first visible rows.
         const fullLoad = getAll();
         const commentsLoad = loadCommentsIndex().catch(() => {});
+        // Comment loading is independent of search participation: even when
+        // "Including comments" is off, the fold control must still reveal them.
+        // Repaint once the index is ready so an open pane cannot remain empty
+        // if the asynchronous comment load finishes after the first render.
+        void commentsLoad.then(() => {
+          if (run === loadRun) seek($("q").value.trim().toLowerCase());
+        });
         const all = await fullLoad;
         if (run !== loadRun) return;
         rows = all;
@@ -521,11 +622,76 @@ function videoIdFromStoredUrl2(url) {
       }
     });
 
+    const RECENT_SEARCHES_KEY = "recentSearchPatterns";
+    const MAX_RECENT_SEARCHES = 40;
+    const recentSearchesSelect = $("recentSearches");
+    let recentSearchPatterns = [];
+
+    function renderRecentSearches() {
+      recentSearchesSelect.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = `Recent searches (${recentSearchPatterns.length}/${MAX_RECENT_SEARCHES})`;
+      recentSearchesSelect.appendChild(placeholder);
+      for (const pattern of recentSearchPatterns) {
+        const option = document.createElement("option");
+        option.value = pattern;
+        option.textContent = pattern;
+        option.title = pattern;
+        recentSearchesSelect.appendChild(option);
+      }
+    }
+
+    async function loadRecentSearches() {
+      try {
+        const bag = await chrome.storage.local.get({ [RECENT_SEARCHES_KEY]: [] });
+        const saved = bag[RECENT_SEARCHES_KEY];
+        recentSearchPatterns = Array.isArray(saved)
+          ? saved.filter((x) => typeof x === "string" && x.trim()).slice(0, MAX_RECENT_SEARCHES)
+          : [];
+      } catch (err) {
+        console.warn("Could not load recent search patterns:", err);
+        recentSearchPatterns = [];
+      }
+      renderRecentSearches();
+    }
+
+    async function rememberSearchPattern(value) {
+      const pattern = String(value || "").trim();
+      if (!pattern) return;
+      // Treat case variants as the same pattern; keep the most recently used spelling.
+      recentSearchPatterns = [pattern, ...recentSearchPatterns.filter(
+        (old) => old.toLowerCase() !== pattern.toLowerCase()
+      )].slice(0, MAX_RECENT_SEARCHES);
+      renderRecentSearches();
+      try {
+        await chrome.storage.local.set({ [RECENT_SEARCHES_KEY]: recentSearchPatterns });
+      } catch (err) {
+        console.warn("Could not save recent search patterns:", err);
+      }
+    }
+
     let searchTimer = null;
     $("q").addEventListener("input", () => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => seek($("q").value.trim().toLowerCase()), 80);
     });
+    // Save a completed pattern on Enter or when the search box loses focus,
+    // rather than saving every intermediate keystroke as a separate pattern.
+    $("q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") rememberSearchPattern($("q").value);
+    });
+    $("q").addEventListener("change", () => rememberSearchPattern($("q").value));
+    recentSearchesSelect.addEventListener("change", () => {
+      const pattern = recentSearchesSelect.value;
+      if (!pattern) return;
+      $("q").value = pattern;
+      seek(pattern.trim().toLowerCase());
+      rememberSearchPattern(pattern);
+      recentSearchesSelect.value = "";
+      recentSearchesSelect.options[0].textContent = `Recent searches (${recentSearchPatterns.length}/${MAX_RECENT_SEARCHES})`;
+    });
+    loadRecentSearches();
 
     document.querySelector(".side").addEventListener("click", (e) => {
       const el = e.target.closest("[data-filter]");
@@ -535,6 +701,23 @@ function videoIdFromStoredUrl2(url) {
       filter = el.dataset.filter;
       seek($("q").value.trim().toLowerCase());
     });
+
+    // Search-range controls live in the top banner and immediately re-run search.
+    const inDateTimeBox = $("searchInDateTime");
+    const inUrlBox = $("searchInUrl");
+    const inTitleBox = $("searchInTitle");
+    function applySearchRange() {
+      searchInDateTime = inDateTimeBox.checked;
+      searchInUrl = inUrlBox.checked;
+      searchInTitle = inTitleBox.checked;
+      seek($("q").value.trim().toLowerCase());
+    }
+    inDateTimeBox.checked = false;
+    inUrlBox.checked = true;
+    inTitleBox.checked = true;
+    for (const box of [inDateTimeBox, inUrlBox, inTitleBox]) {
+      box.addEventListener("change", applySearchRange);
+    }
 
     const includeBox = $("includeComments");
     const includeLabel = $("includeCommentsLabel");
@@ -567,6 +750,23 @@ function videoIdFromStoredUrl2(url) {
     dedupeBox.addEventListener("change", () => {
       paintDedupe(dedupeBox.checked);
       chrome.storage.local.set({ dedupeCommentId: dedupeCommentId });
+      seek($("q").value.trim().toLowerCase());
+    });
+
+    const dedupeTitleDailyBox = $("dedupeTitleDaily");
+    const dedupeTitleDailyLabel = $("dedupeTitleDailyLabel");
+    function paintDedupeTitleDaily(on) {
+      dedupeTitleDaily = !!on;
+      dedupeTitleDailyBox.checked = dedupeTitleDaily;
+      dedupeTitleDailyLabel.textContent = dedupeTitleDaily ? "on" : "off";
+    }
+    chrome.storage.local.get({ dedupeTitleDaily: false }).then((bag) => {
+      paintDedupeTitleDaily(bag.dedupeTitleDaily);
+      seek($("q").value.trim().toLowerCase());
+    });
+    dedupeTitleDailyBox.addEventListener("change", () => {
+      paintDedupeTitleDaily(dedupeTitleDailyBox.checked);
+      chrome.storage.local.set({ dedupeTitleDaily: dedupeTitleDaily });
       seek($("q").value.trim().toLowerCase());
     });
 
@@ -605,26 +805,245 @@ function videoIdFromStoredUrl2(url) {
       a.href = URL.createObjectURL(blob);
       a.download = "visit-comment-log.json";
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
-    $("importBtn").onclick = () => $("fileInput").click();
+
+    // Export the authoritative COMMENT_STORE records, plus one metadata entry per
+    // video. The title comes from the newest history row for that video which has
+    // a useful (non-placeholder) title; a canonical watch URL is the fallback.
+    async function readAllFromStore(storeName) {
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        let tx;
+        try {
+          tx = db.transaction(storeName, "readonly");
+        } catch (err) {
+          reject(err);
+          return;
+        }
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error || new Error("Could not read " + storeName));
+        tx.onabort = () => reject(tx.error || new Error("Read transaction aborted: " + storeName));
+      });
+    }
+
+    function historyTimestamp(row) {
+      const createdAt = row && row.createdAt;
+      if (typeof createdAt === "number" && Number.isFinite(createdAt)) return createdAt;
+      if (createdAt) {
+        const parsed = Date.parse(createdAt);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      const dateTime = [row && row.date, row && row.time].filter(Boolean).join("T");
+      const parsedDateTime = Date.parse(dateTime);
+      return Number.isFinite(parsedDateTime) ? parsedDateTime : 0;
+    }
+
+    function usefulVideoTitle(value) {
+      const title = String(value || "").trim();
+      if (!title) return "";
+      if (/^(?:youtube|youtube\s*[-|:]?\s*(?:home|loading)|loading(?:\.\.\.)?)$/i.test(title)) return "";
+      return title;
+    }
+
+    function triggerJsonDownload(filename, payload) {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
+
+    async function exportComments() {
+      const [comments, history] = await Promise.all([
+        readAllFromStore(COMMENT_STORE),
+        getAll()
+      ]);
+
+      // Build the newest-first candidate history list for each video ID.
+      const historyByVideo = new Map();
+      for (const row of history) {
+        const videoId = videoIdFromStoredUrl(row && row.url);
+        if (!videoId) continue;
+        const list = historyByVideo.get(videoId) || [];
+        list.push(row);
+        historyByVideo.set(videoId, list);
+      }
+      for (const list of historyByVideo.values()) {
+        list.sort((a, b) => historyTimestamp(b) - historyTimestamp(a));
+      }
+
+      const videoIds = [...new Set(comments.map(c => String(c && c.videoId || "").trim()).filter(Boolean))].sort();
+      const videos = videoIds.map(videoId => {
+        const candidates = historyByVideo.get(videoId) || [];
+        const titledRow = candidates.find(row => usefulVideoTitle(row.title));
+        return {
+          videoId,
+          url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+          title: titledRow ? usefulVideoTitle(titledRow.title) : "",
+          titleSource: titledRow ? "history" : "unavailable",
+          titleRecordedAt: titledRow ? (titledRow.createdAt || null) : null,
+          titleSourceUrl: titledRow ? String(titledRow.url || "") : ""
+        };
+      });
+
+      triggerJsonDownload("youtube-comments.json", {
+        format: "ai-chat-logger-comments",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        videos,
+        comments
+      });
+      $("status").textContent = `Exported ${comments.length} comments for ${videos.length} videos`;
+    }
+
+    $("exportCommentsBtn").onclick = async () => {
+      const button = $("exportCommentsBtn");
+      button.disabled = true;
+      const oldText = button.textContent;
+      button.textContent = "Exporting…";
+      try {
+        await exportComments();
+      } catch (err) {
+        console.error("Export Comments failed:", err);
+        $("status").textContent = "Export Comments failed: " + (err && err.message ? err.message : String(err));
+      } finally {
+        button.disabled = false;
+        button.textContent = oldText;
+      }
+    };
+    let importMode = "history";
+    $("importBtn").onclick = () => {
+      importMode = "history";
+      $("fileInput").accept = "application/json,.json";
+      $("fileInput").click();
+    };
+    $("importCommentsBtn").onclick = () => {
+      importMode = "comments";
+      $("fileInput").accept = "application/json,.json";
+      $("fileInput").click();
+    };
+
+    function dateTimeParts(value, fallbackValue = Date.now()) {
+      let ms = 0;
+      if (typeof value === "number" && Number.isFinite(value)) ms = value;
+      else if (value) {
+        const parsed = Date.parse(String(value));
+        if (Number.isFinite(parsed)) ms = parsed;
+      }
+      if (!ms) {
+        if (typeof fallbackValue === "number" && Number.isFinite(fallbackValue)) ms = fallbackValue;
+        else ms = Date.now();
+      }
+      const d = new Date(ms);
+      return {
+        date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+        time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+        createdAt: ms
+      };
+    }
+
+    async function addHistoryVideoIfMissing(video, exportedAt) {
+      const videoId = String(video.videoId || "").trim();
+      const url = String(video.url || (videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` : "")).trim();
+      if (!url) return false;
+      const title = String(video.title || "").trim();
+      const current = await getAll();
+      // Exact URL+title pair semantics: same URL with a different title is a
+      // distinct history row and must not be collapsed by addRecord()'s URL+notes rule.
+      if (current.some((r) => normUrl(r.url) === normUrl(url) && String(r.title || "").trim() === title)) return false;
+      const dt = dateTimeParts(video.titleRecordedAt || exportedAt || Date.now());
+      await withStore("readwrite", (store) => store.add({
+        date: dt.date,
+        time: dt.time,
+        url,
+        title,
+        comments: "",
+        createdAt: dt.createdAt
+      }));
+      return true;
+    }
+
+    async function addImportedCommentIfMissing(input) {
+      const videoId = String(input.videoId || "").trim();
+      const commentId = String(input.commentId || "").trim();
+      if (!videoId || !commentId) return false;
+      const recordKey = String(input.recordKey || `${videoId}|${commentId}`);
+      const row = { ...input, recordKey, videoId, commentId };
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(COMMENT_STORE, "readwrite");
+        const store = tx.objectStore(COMMENT_STORE);
+        const req = store.get(recordKey);
+        let inserted = false;
+        req.onsuccess = () => {
+          if (req.result) return;
+          try {
+            store.add(row);
+            inserted = true;
+          } catch (err) {
+            reject(err);
+          }
+        };
+        req.onerror = () => reject(req.error || new Error("Could not check existing comment"));
+        tx.oncomplete = () => resolve(inserted);
+        tx.onerror = () => reject(tx.error || new Error("Could not import comment"));
+        tx.onabort = () => reject(tx.error || new Error("Comment import transaction aborted"));
+      });
+    }
+
     $("fileInput").onchange = async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const data = JSON.parse(await file.text());
-      for (const row of data) {
-        const { id, ...rest } = row;
-        await addRecord({
-          date: rest.date || "",
-          time: rest.time || "",
-          url: rest.url || "",
-          title: rest.title || "",
-          comments: rest.comments || "",
-          createdAt: rest.createdAt || Date.now()
-        });
+      const mode = importMode;
+      try {
+        const data = JSON.parse(await file.text());
+        if (mode === "history") {
+          if (!Array.isArray(data)) throw new Error("History import expects a JSON array.");
+          let added = 0;
+          for (const row of data) {
+            const { id, ...rest } = row;
+            if (await addRecord({
+              date: rest.date || "",
+              time: rest.time || "",
+              url: rest.url || "",
+              title: rest.title || "",
+              comments: rest.comments || "",
+              createdAt: rest.createdAt || Date.now()
+            })) added++;
+          }
+          await refresh();
+          $("status").textContent = `History import complete · ${added} rows added`;
+        } else {
+          if (!data || !Array.isArray(data.videos) || !Array.isArray(data.comments)) {
+            throw new Error("Comments import expects youtube-comments.json with videos[] and comments[].");
+          }
+          let videosAdded = 0;
+          let commentsAdded = 0;
+          let commentsSkipped = 0;
+          for (const video of data.videos) {
+            if (await addHistoryVideoIfMissing(video || {}, data.exportedAt)) videosAdded++;
+          }
+          for (const comment of data.comments) {
+            if (await addImportedCommentIfMissing(comment || {})) commentsAdded++;
+            else commentsSkipped++;
+          }
+          await refresh();
+          await loadCommentsIndex();
+          seek($("q").value.trim().toLowerCase());
+          $("status").textContent = `Comments import complete · ${videosAdded} video history rows added · ${commentsAdded} comments added · ${commentsSkipped} skipped (duplicate/invalid)`;
+        }
+      } catch (err) {
+        console.error("Import failed:", err);
+        $("status").textContent = "Import failed: " + (err && err.message ? err.message : String(err));
+      } finally {
+        e.target.value = "";
       }
-      e.target.value = "";
-      await refresh();
     };
 
     refresh();
