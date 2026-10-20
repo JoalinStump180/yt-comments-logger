@@ -210,7 +210,7 @@ async function logUrlImmediately(rawUrl) {
 // This fires at 0.0s the instant you click the favorite bar button
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0) return; // Only log top-level tab navigations
-  logUrlImmediately(""+details.url).catch(console.error);
+  logUrlImmediately(""+details.url+"     by Navigation.onBeforeNavigate").catch(console.error);
 });
 
 // Optional: Keep onCommitted as a backup for same-document/history state changes
@@ -245,12 +245,12 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
   //if (existing) {
    // existing.title = ""+title;
     //await putRecord(existing);
-    
+    const { date, time } = nowParts();
           await putRecord({
-        date: message.date,
-        time: message.time,
+        date:  date,
+        time:   time,
         url: key||"",
-        title: title||"",
+        title: title+"     by  Navigation.onComplete",
         comments: "Captured via link click",
         createdAt: Date.now()
       });

@@ -11,10 +11,14 @@ const $ = (id) => document.getElementById(id);
     }
 
     let includeComments = false;
+    let expandCommentsOnUrlHit = false;
     let dedupeCommentId = false;
     let dedupeTitleDaily = false;
     const firstRowByCommentId = new Map();
     const openVideos = new Set();
+    // Explicit user folds override automatic expansion caused by comment search hits.
+    const foldedVideos = new Set();
+    let lastFoldQuery = null;
     const commentsByVideo = new Map();
     const recycledByVideo = new Map();
     const selectedComments = new Set();
@@ -248,6 +252,24 @@ function videoIdFromStoredUrl2(url) {
         return positive.length === 0 || positive.some((t) => h.includes(t.text));
       });
     }
+    // Fields that belong to the comment itself, excluding video URL/title metadata.
+    // This distinction lets the URL-hit checkbox decide whether a URL match alone
+    // should expose every comment, rather than making every comment look like a hit.
+    function commentOwnHay(c) {
+      return [c.commentId, c.text, c.author, c.handle, c.channelId, String(c.localIndex),
+        searchInDateTime ? commentDateTimeHay(c) : "", c.sourceUrl].join(" ");
+    }
+    function commentOwnHitsAny(list, q) {
+      const tokens = parseQuery(q);
+      if (!tokens.length) return [];
+      const positive = tokens.filter(t => !t.negative);
+      const negative = tokens.filter(t => t.negative);
+      return (list || []).filter(c => {
+        const h = commentOwnHay(c).toLowerCase();
+        if (negative.some(t => h.includes(t.text))) return false;
+        return positive.length === 0 || positive.some(t => h.includes(t.text));
+      });
+    }
     function matchRow(r, q) {
       const url = (r.url || "").toLowerCase();
       if (filter === "yt" && !url.includes("youtube.com") && !url.includes("youtu.be")) return false;
@@ -268,10 +290,10 @@ function videoIdFromStoredUrl2(url) {
     function activeComments(vid) {
       return filter === "recycle" ? (recycledByVideo.get(vid) || []) : (commentsByVideo.get(vid) || []);
     }
-    function commentBlock(list) {
+    function commentBlock(list, q = "") {
       if (!list.length) return `<div class="cmt">No comments logged for this video.</div>`;
       return list.map((c) =>
-        `<div class="cmt ${selectedComments.has(c.recordKey) ? "sel" : ""}" data-key="${esc(c.recordKey)}"><span class="uid">#${esc(c.localIndex ?? "?")}  ${esc(c.handle || (c.author ? "@" + c.author : ""))}  ${esc(c.channelId || "")}  ${esc(c.publishedTime || "")}  ${esc(c.commentId)}</span>\n${esc(c.text || "")}</div>`
+        `<div class="cmt ${selectedComments.has(c.recordKey) ? "sel" : ""}" data-key="${esc(c.recordKey)}"><span class="uid">#${highlightSearchText(c.localIndex ?? "?", q)}  ${highlightSearchText(c.handle || (c.author ? "@" + c.author : ""), q)}  ${highlightSearchText(c.channelId || "", q)}  ${highlightSearchText(c.publishedTime || "", q)}  ${highlightSearchText(c.commentId || "", q)}</span>\n${highlightSearchText(c.text || "", q)}</div>`
       ).join("");
     }
 
@@ -327,25 +349,33 @@ function videoIdFromStoredUrl2(url) {
     function rowHtml(r) {
       const vid = videoIdFromStoredUrl(r.url);
       const q = $("q").value.trim().toLowerCase();
-      // Always obtain comments for manual unfolding. includeComments gates
-      // searching and automatic expansion only; it does not hide comment data.
       const all = onlyFirstRow(activeComments(vid), r.id);
       const fullHits = q && includeComments ? commentHits(all, q, r) : [];
       const partHits = q && includeComments ? commentHitsAny(all, q, r) : [];
       const hits = fullHits.length ? fullHits : partHits;
-      const auto = includeComments && !!q && hits.length > 0;
-      const show = vid && (openVideos.has(vid) || auto || filter === "recycle");
+      const tokens = parseQuery(q);
+      const positiveTokens = tokens.filter(t => !t.negative);
+      const urlHit = !!q && searchInUrl && positiveTokens.length > 0 && hayHasAll(r.url || "", tokens);
+      // With the checkbox on, a URL hit OR a hit in any comment-owned field
+      // (text, @handle/author, channel ID, etc.) unfolds every comment on that video.
+      const commentOwnHits = q && includeComments ? commentOwnHitsAny(all, q) : [];
+      const showAllForHit = expandCommentsOnUrlHit && (urlHit || commentOwnHits.length > 0);
+      // URL/title metadata repeated in commentHay must not count as a comment hit
+      // by itself when the expand-all checkbox is off.
+      const urlOnlyHits = urlHit && !showAllForHit ? commentOwnHits : hits;
+      const auto = includeComments && !!q && urlOnlyHits.length > 0;
+      const show = vid && !foldedVideos.has(vid) && (openVideos.has(vid) || auto || showAllForHit || filter === "recycle");
       const fold = vid
         ? `<button class="fold" data-vid="${esc(vid)}" type="button">${show ? "?" : "+"}</button><button class="selall" data-vid="${esc(vid)}" type="button" title="Select all/none comments">?</button>`
         : "";
       const detail = show
-        ? `<tr class="cmt-row" data-vid="${esc(vid)}"><td colspan="5">${commentBlock(auto ? hits : all)}</td></tr>`
+        ? `<tr class="cmt-row" data-vid="${esc(vid)}"><td colspan="5">${commentBlock(showAllForHit ? all : (auto ? urlOnlyHits : all), q)}</td></tr>`
         : "";
       return `<tr data-id="${r.id}" class="${r.id===selectedId?"sel":""} ${selectedRows.has(r.id)?"row-sel":""}">
           <td>${esc(r.date)}</td>
           <td>${esc(r.time)}</td>
           <td title="${esc(r.title)}">${fold}${esc(r.title || "")}</td>
-          <td title="${esc(r.url)}">${esc(r.url)}</td>
+          <td title="${esc(r.url)}">${highlightSearchText(r.url || "", q)}</td>
           <td>${r.id}</td>
         </tr>${detail}`;
     }
@@ -372,6 +402,11 @@ function videoIdFromStoredUrl2(url) {
     }
 
     function seek(q) {
+      // A changed query gets a fresh automatic-expansion decision; a fold click
+      // reruns seek with the same query and therefore keeps the user override.
+      const foldQuery = String(q || "").trim().toLowerCase();
+      if (lastFoldQuery !== null && foldQuery !== lastFoldQuery) foldedVideos.clear();
+      lastFoldQuery = foldQuery;
       matched = rows.filter((r) => matchRow(r, q));
       matched = onlyNewestTitlePerDay(matched);
       rebuildFirstRowMap();
@@ -381,6 +416,22 @@ function videoIdFromStoredUrl2(url) {
 
     function esc(s) {
       return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+    }
+    // Highlight positive search tokens in visible URL/comment text. The original
+    // text is HTML-escaped before insertion, so matching text cannot inject markup.
+    function highlightSearchText(value, q) {
+      const source = String(value ?? "");
+      const terms = [...new Set(parseQuery(q).filter(t => !t.negative).map(t => t.text).filter(Boolean))]
+        .sort((a, b) => b.length - a.length);
+      if (!terms.length) return esc(source);
+      const re = new RegExp(terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "ig");
+      let out = "", last = 0, m;
+      while ((m = re.exec(source))) {
+        out += esc(source.slice(last, m.index)) + '<mark class="search-hit">' + esc(m[0]) + '</mark>';
+        last = m.index + m[0].length;
+        if (!m[0].length) re.lastIndex++;
+      }
+      return out + esc(source.slice(last));
     }
 
     async function loadCommentsIndex() {
@@ -442,13 +493,6 @@ function videoIdFromStoredUrl2(url) {
         // These potentially expensive operations no longer block the first visible rows.
         const fullLoad = getAll();
         const commentsLoad = loadCommentsIndex().catch(() => {});
-        // Comment loading is independent of search participation: even when
-        // "Including comments" is off, the fold control must still reveal them.
-        // Repaint once the index is ready so an open pane cannot remain empty
-        // if the asynchronous comment load finishes after the first render.
-        void commentsLoad.then(() => {
-          if (run === loadRun) seek($("q").value.trim().toLowerCase());
-        });
         const all = await fullLoad;
         if (run !== loadRun) return;
         rows = all;
@@ -578,8 +622,16 @@ function videoIdFromStoredUrl2(url) {
       const fold = e.target.closest(".fold");
       if (fold) {
         const vid = fold.dataset.vid;
-        if (openVideos.has(vid)) openVideos.delete(vid);
-        else openVideos.add(vid);
+        // Inspect the current DOM before rerendering: if the detail row exists,
+        // the user is closing it; otherwise they are explicitly opening it.
+        const currentlyShown = !!document.querySelector(`#tbody tr.cmt-row[data-vid="${CSS.escape(vid)}"]`);
+        if (currentlyShown) {
+          foldedVideos.add(vid);
+          openVideos.delete(vid);
+        } else {
+          foldedVideos.delete(vid);
+          openVideos.add(vid);
+        }
         seek($("q").value.trim().toLowerCase());
         return;
       }
@@ -733,6 +785,23 @@ function videoIdFromStoredUrl2(url) {
     includeBox.addEventListener("change", () => {
       paintInclude(includeBox.checked);
       chrome.storage.local.set({ includeComments: includeComments });
+      seek($("q").value.trim().toLowerCase());
+    });
+
+    const expandUrlHitBox = $("expandCommentsOnUrlHit");
+    const expandUrlHitLabel = $("expandCommentsOnUrlHitLabel");
+    function paintExpandUrlHit(on) {
+      expandCommentsOnUrlHit = !!on;
+      expandUrlHitBox.checked = expandCommentsOnUrlHit;
+      expandUrlHitLabel.textContent = expandCommentsOnUrlHit ? "on" : "off";
+    }
+    chrome.storage.local.get({ expandCommentsOnUrlHit: false }).then((bag) => {
+      paintExpandUrlHit(bag.expandCommentsOnUrlHit);
+      seek($("q").value.trim().toLowerCase());
+    });
+    expandUrlHitBox.addEventListener("change", () => {
+      paintExpandUrlHit(expandUrlHitBox.checked);
+      chrome.storage.local.set({ expandCommentsOnUrlHit });
       seek($("q").value.trim().toLowerCase());
     });
 

@@ -111,6 +111,7 @@
     .cmt.sel { background: #ffe08a; }
     tr.row-sel { outline: 1px solid #e6a800; }
     .cmt .uid { color: #555; font-family: Consolas, monospace; }
+    mark.search-hit { background: #00ff00; color: #000; padding: 0 1px; border-radius: 2px; }
     #menu { position: fixed; z-index: 20; background: #fff; border: 1px solid #888; min-width: 160px; display: none; }
     #menu button { display: block; width: 100%; text-align: left; border: 0; background: #fff; padding: 6px 10px; }
     #menu button:hover { background: #e5f3ff; }
@@ -176,6 +177,7 @@
       <label style="white-space:nowrap;"><input type="checkbox" id="searchInUrl" checked /> in url</label>
       <label style="white-space:nowrap;"><input type="checkbox" id="searchInTitle" checked /> in title</label>
       <label style="white-space:nowrap;"><input type="checkbox" id="includeComments" /> Including comments: <span id="includeCommentsLabel">off</span></label>
+      <label style="white-space:nowrap;" title="When the URL or any comment field matches the search (including @uploaderID/author/channel ID), automatically unfold and show all comments for that video."><input type="checkbox" id="expandCommentsOnUrlHit" /> URL/comment hit: unfold all comments: <span id="expandCommentsOnUrlHitLabel">off</span></label>
       <label style="white-space:nowrap;"><input type="checkbox" id="dedupeCommentId" /> Comment ID once (first row): <span id="dedupeCommentIdLabel">off</span></label>
       <label style="white-space:nowrap;"><input type="checkbox" id="dedupeTitleDaily" /> Same title once each day: <span id="dedupeTitleDailyLabel">off</span></label>
       <button id="reloadBtn">Refresh</button>
