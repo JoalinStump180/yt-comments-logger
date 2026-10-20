@@ -1,3 +1,6 @@
+let lastUrl = "";
+let lastTitle = "";
+
 let lastSent = "lastsent";
 function pingTitle() {
   const title = String(document.title || "").trim();
