@@ -362,25 +362,30 @@ function scheduleFlush(delay = 200) {
   }, waitMs);
 }
 
-const obs = new MutationObserver(scheduleFlush);
-
+ //const obs = new MutationObserver(scheduleFlush);
+// obs.observe(document.body, { childList: true, subtree: true });
+ 
+ 
+ 
+ 
 function arm() {
   obs.disconnect();
   obs.observe(document.body, { childList: true, subtree: true });
   scheduleFlush(100);
 }
 
-document.addEventListener("yt-navigate-start", () => {
+if (0) document.addEventListener("yt-navigate-start", () => {
   obs.disconnect();
   clearTimeout(flushTimer);
 });
 
-document.addEventListener("yt-navigate-finish", () => {
+if (0) document.addEventListener("yt-navigate-finish", () => {
   arm();
   setTimeout(() => scheduleFlush(100), 500);
   setTimeout(() => scheduleFlush(100), 1500);
 });
 
-window.addEventListener("scroll", () => scheduleFlush(300), { passive: true });
-window.addEventListener("load", arm);
-setInterval(scheduleFlush, 1000);
+if (0) window.addEventListener("scroll", () => scheduleFlush(300), { passive: true });
+if (0) window.addEventListener("load", arm);
+//setInterval(scheduleFlush, 500);
+setInterval(scheduleFlush, 500);

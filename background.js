@@ -44,7 +44,7 @@ function canonicalize(rawUrl) {
 
   const vid = youtubeVideoId(u);
   if (vid) {
-    const existing = u.searchParams.get("todaydate");
+    const existing = u.searchParams.get("todaydate");f
     const todaydate = existing && existing.length ? existing : todayStamp();
 
     if (u.pathname.startsWith("/post/")) {
@@ -270,6 +270,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
 
 
 
+var lastvideoid = "lastvideoid"
 var lasttitle = "lasttitle"
 var lasturl = "lasturl"
 async function addUrl(url, title) {
@@ -401,6 +402,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       comments: "Custom page-title2 event",
       createdAt: Date.now()
     });
+
+
+
+
+
+
 
     //await syncCache();
 
