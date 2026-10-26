@@ -210,6 +210,12 @@ function videoIdFromStoredUrl2(url) {
       if (preferredRow && videoIdFromStoredUrl(preferredRow.url) === videoId) return preferredRow;
       return rows.find((r) => videoIdFromStoredUrl(r.url) === videoId) || null;
     }
+    function loggedStamp(c) {
+      const d = new Date(c.createdAt);
+      if (!c.createdAt || Number.isNaN(d.getTime())) return "";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
     function commentDateTimeHay(c) {
       let created = "";
       if (typeof c.createdAt === "number" && Number.isFinite(c.createdAt)) {
@@ -217,7 +223,7 @@ function videoIdFromStoredUrl2(url) {
       } else if (c.createdAt) {
         created = String(c.createdAt);
       }
-      return [c.publishedTime, created].filter(Boolean).join(" ");
+      return [loggedStamp(c), c.publishedTime, created].filter(Boolean).join(" ");
     }
     // URL/title metadata belongs to the video, so it is searchable from each
     // associated comment as well as from the history row itself.
@@ -293,7 +299,7 @@ function videoIdFromStoredUrl2(url) {
     function commentBlock(list, q = "") {
       if (!list.length) return `<div class="cmt">No comments logged for this video.</div>`;
       return list.map((c) =>
-        `<div class="cmt ${selectedComments.has(c.recordKey) ? "sel" : ""}" data-key="${esc(c.recordKey)}"><span class="uid">#${highlightSearchText(c.localIndex ?? "?", q)}  ${highlightSearchText(c.handle || (c.author ? "@" + c.author : ""), q)}  ${highlightSearchText(c.channelId || "", q)}  ${highlightSearchText(c.publishedTime || "", q)}  ${highlightSearchText(c.commentId || "", q)}</span>\n${highlightSearchText(c.text || "", q)}</div>`
+        `<div class="cmt ${selectedComments.has(c.recordKey) ? "sel" : ""}" data-key="${esc(c.recordKey)}"><span class="uid">#${highlightSearchText(c.localIndex ?? "?", q)}  ${highlightSearchText(loggedStamp(c), q)}  ${highlightSearchText(c.handle || (c.author ? "@" + c.author : ""), q)}  ${highlightSearchText(c.channelId || "", q)}  ${highlightSearchText(c.publishedTime || "", q)}  ${highlightSearchText(c.commentId || "", q)}</span>\n${highlightSearchText(c.text || "", q)}</div>`
       ).join("");
     }
 
@@ -382,9 +388,27 @@ function videoIdFromStoredUrl2(url) {
 
     function paintPreview() {
       const cur = rows.find((x) => x.id === selectedId);
-      $("preview").textContent = cur
-        ? `${cur.date} ${cur.time}\n${cur.title || ""}\n${cur.url}`
-        : "Select a row to preview.";
+      const box = $("preview");
+      if (!cur) {
+        box.textContent = "Select a row to preview.";
+        return;
+      }
+      const url = cur.url || "";
+      box.innerHTML =
+        `${esc(cur.date)} ${esc(cur.time)}<br>` +
+        `${esc(cur.title || "")}<br>` +
+        `<button type="button" id="copyUrlBtn" class="copy-url">[copy to clip]</button> ${esc(url)}`;
+      const btn = $("copyUrlBtn");
+      if (!btn) return;
+      btn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          btn.textContent = "[copied]";
+          setTimeout(() => { if (btn.isConnected) btn.textContent = "[copy to clip]"; }, 1200);
+        } catch (_) {
+          btn.textContent = "[copy failed]";
+        }
+      };
     }
 
     function renderSlice(reset) {
