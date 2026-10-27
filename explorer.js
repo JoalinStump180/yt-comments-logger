@@ -680,7 +680,12 @@ function videoIdFromStoredUrl2(url) {
         const vid = fold.dataset.vid;
         // Inspect the current DOM before rerendering: if the detail row exists,
         // the user is closing it; otherwise they are explicitly opening it.
-        const currentlyShown = !!document.querySelector(`#tbody tr.cmt-row[data-vid="${CSS.escape(vid)}"]`);
+        const query = $("q").value.trim().toLowerCase();
+        const clickedMainRow = fold.closest("tr[data-id]");
+        const adjacentDetail = clickedMainRow && clickedMainRow.nextElementSibling;
+        const currentlyShown = query
+          ? !!document.querySelector(`#tbody tr.cmt-row[data-vid="${CSS.escape(vid)}"]`)
+          : !!(adjacentDetail && adjacentDetail.matches("tr.cmt-row") && adjacentDetail.dataset.vid === vid);
         if (currentlyShown) {
           foldedVideos.add(vid);
           openVideos.delete(vid);
@@ -688,7 +693,33 @@ function videoIdFromStoredUrl2(url) {
           foldedVideos.delete(vid);
           openVideos.add(vid);
         }
-        seek($("q").value.trim().toLowerCase());
+        if (!query) {
+          // In normal (non-search) mode, changing one video's fold state should
+          // update only that URL row's detail row. Rebuilding the whole tbody via
+          // seek()/renderSlice(true) needlessly replaces every visible row.
+          const mainRow = fold.closest("tr[data-id]");
+          const rowId = mainRow ? Number(mainRow.dataset.id) : NaN;
+          const sourceRows = filter === "diagnostic" ? diagnosticRows : rows;
+          const record = sourceRows.find((r) => Number(r.id) === rowId);
+          if (mainRow && record) {
+            const scratch = document.createElement("tbody");
+            scratch.innerHTML = rowHtml(record);
+            const renderedMain = scratch.querySelector("tr[data-id]");
+            const newDetail = scratch.querySelector("tr.cmt-row");
+            const oldDetail = mainRow.nextElementSibling;
+            if (oldDetail && oldDetail.matches("tr.cmt-row") && oldDetail.dataset.vid === vid) {
+              oldDetail.remove();
+            }
+            if (newDetail) mainRow.insertAdjacentElement("afterend", newDetail);
+            const currentFold = mainRow.querySelector(".fold");
+            const newFold = renderedMain && renderedMain.querySelector(".fold");
+            if (currentFold && newFold) currentFold.textContent = newFold.textContent;
+          }
+        } else {
+          // Keep the existing search-mode path, where matching and automatic
+          // comment expansion can affect which rows and comments are displayed.
+          seek(query);
+        }
         return;
       }
       const tr = e.target.closest("tr[data-id]");
