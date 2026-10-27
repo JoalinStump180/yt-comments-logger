@@ -318,9 +318,24 @@ function videoIdFromStoredUrl2(url) {
       ).join("");
     }
 
+    // Use the item's own stable identity, not commentId alone. In particular,
+    // uploader posts currently share the sentinel commentId "__post__"; their
+    // recordKey still distinguishes each post (videoId|commentId).
+    function commentIdentityKey(c) {
+      const recordKey = String(c?.recordKey || "").trim();
+      if (recordKey) return recordKey;
+      // Compatibility fallback for imported/older rows that lack recordKey.
+      const videoId = String(c?.videoId || "").trim();
+      const commentId = String(c?.commentId || "").trim();
+      return videoId && commentId ? `${videoId}|${commentId}` : "";
+    }
+
     function onlyFirstRow(list, rowId) {
       if (!dedupeCommentId) return list;
-      return (list || []).filter((c) => firstRowByCommentId.get(c.commentId || c.recordKey) === rowId);
+      return (list || []).filter((c) => {
+        const key = commentIdentityKey(c);
+        return key && firstRowByCommentId.get(key) === rowId;
+      });
     }
     function rebuildFirstRowMap() {
       firstRowByCommentId.clear();
@@ -328,8 +343,8 @@ function videoIdFromStoredUrl2(url) {
       for (const r of matched) {
         const list = activeComments(videoIdFromStoredUrl(r.url));
         for (const c of list) {
-          const k = c.commentId || c.recordKey;
-          if (k && !firstRowByCommentId.has(k)) firstRowByCommentId.set(k, r.id);
+          const key = commentIdentityKey(c);
+          if (key && !firstRowByCommentId.has(key)) firstRowByCommentId.set(key, r.id);
         }
       }
     }
