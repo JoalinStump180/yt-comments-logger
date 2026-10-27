@@ -439,8 +439,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg && msg.type === "yt-hash-texts" && Array.isArray(msg.batch)) {
     (async () => {
-      const settings = await chrome.storage.local.get({ vulHashLoggingEnabled: true });
-      const loggingEnabled = settings.vulHashLoggingEnabled !== false;
+      //const settings = await chrome.storage.local.get({ vulHashLoggingEnabled: true });
+      const settings = await chrome.storage.local.get({ commentsLogging: false  });
+      const loggingEnabled = settings.commentsLogging !== false;
       const statuses = [];
       let added = 0;
       const db = await openDb();
