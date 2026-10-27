@@ -48,6 +48,7 @@ async function addCommentOnce(row) {
           recordKey,
           videoId: row.videoId,
           commentId: row.commentId,
+          itemType: row.itemType || (row.commentId === "__post__" ? "uploader-post" : "comment"),
           author: row.author || "",
           handle: row.handle || "",
           channelId: row.channelId || "",

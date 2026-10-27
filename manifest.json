@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Visit URL Logger",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "Background logger for visited URLs, titles, and optional YouTube comments.",
   "permissions": ["webNavigation", "storage", "tabs"],
   "host_permissions": ["<all_urls>"],

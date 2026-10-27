@@ -207,6 +207,7 @@
       <div data-filter="yt">YouTube URLs</div>
       <div data-filter="other">Other URLs</div>
       <div data-filter="recycle">Recycle box</div>
+      <div data-filter="diagnostic">Diagnostic <span id="diagnosticCount" style="float:right;color:#777"></span></div>
     </aside>
     <div class="main">
       <div class="listwrap">
@@ -229,6 +230,21 @@
   </div>
   <div class="status" id="status">0 items</div>
   <div id="menu"></div>
+  <div class="dlg" id="commentHashConfigDlg">
+    <div class="box" style="width:min(760px,90vw);">
+      <h3>YouTube text extraction rules</h3>
+      <p style="margin:0 0 8px;color:#555;">One rule per line, using the comment-hash-tab v0.3.2 syntax. Rules are saved for the logger.</p>
+      <textarea id="commentHashPolicy" style="height:260px;white-space:pre;font-family:Consolas,monospace;"></textarea>
+      <div class="acts"><button id="commentHashConfigCancel">Cancel</button> <button id="commentHashConfigSave">Save</button></div>
+    </div>
+  </div>
+  <div class="dlg" id="diagnosticConfigDlg">
+    <div class="box">
+      <h3>Diagnostic settings</h3>
+      <label style="display:flex;align-items:center;gap:8px;"><input id="diagnosticLoggingEnabled" type="checkbox" style="width:auto;" /> Log diagnostic items</label>
+      <div class="acts"><button id="diagnosticConfigClose">Close</button></div>
+    </div>
+  </div>
 
   <div class="dlg" id="dlg">
     <div class="box">

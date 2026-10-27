@@ -437,6 +437,45 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
+  if (msg && msg.type === "yt-hash-texts" && Array.isArray(msg.batch)) {
+    (async () => {
+      const settings = await chrome.storage.local.get({ vulHashLoggingEnabled: true });
+      const loggingEnabled = settings.vulHashLoggingEnabled !== false;
+      const statuses = [];
+      let added = 0;
+      const db = await openDb();
+      for (const item of msg.batch) {
+        if (!item || !item.videoId || !item.commentId || !String(item.text || "").trim()) {
+          statuses.push({ status: "new-unlogged", logged: false });
+          continue;
+        }
+        const key = commentKey(item.videoId, item.commentId);
+        const existing = await new Promise((resolve, reject) => {
+          const req = db.transaction(COMMENT_STORE, "readonly").objectStore(COMMENT_STORE).get(key);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+        });
+        if (existing) {
+          statuses.push({ status: "already", logged: true });
+          continue;
+        }
+        if (!loggingEnabled) {
+          statuses.push({ status: "new-unlogged", logged: false });
+          continue;
+        }
+        const wasAdded = await addCommentOnce(item);
+        if (wasAdded) {
+          added++;
+          statuses.push({ status: "new", logged: true });
+        } else {
+          statuses.push({ status: "already", logged: true });
+        }
+      }
+      sendResponse({ ok: true, added, statuses });
+    })().catch(error => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
+
   if (msg && msg.type === "yt-comments" && Array.isArray(msg.batch)) {
     (async () => {
       const bag = await chrome.storage.local.get({ commentsLogging: false });

@@ -1,5 +1,16 @@
+const DEFAULT_COMMENT_HASH_POLICY = [
+  "youtube.com:",
+  "  ytd-comment-view-model;#author-text:1,3-4;yt-attributed-string#content-text:1-2,5-6",
+  "  ytd-backstage-post-renderer;#author-text:1;yt-formatted-string#content-text:1,3-4",
+  "end",
+  "othersite.com:",
+  "  .comment;ti:\"User Said:\";ti:\"Chatgpt Said:\"",
+  "end"
+].join("\n");
 const $ = (id) => document.getElementById(id);
     let rows = [];
+    let diagnosticRows = [];
+    let diagnosticLoggingEnabled = true;
     let filter = "all";
     let selectedId = null;
 
@@ -277,6 +288,10 @@ function videoIdFromStoredUrl2(url) {
       });
     }
     function matchRow(r, q) {
+      if (filter === "diagnostic") {
+        if (!q) return true;
+        return [r.title, r.url, r.comments].join(" ").toLowerCase().includes(String(q).toLowerCase());
+      }
       const url = (r.url || "").toLowerCase();
       if (filter === "yt" && !url.includes("youtube.com") && !url.includes("youtu.be")) return false;
       if (filter === "other" && (url.includes("youtube.com") || url.includes("youtu.be"))) return false;
@@ -387,7 +402,7 @@ function videoIdFromStoredUrl2(url) {
     }
 
     function paintPreview() {
-      const cur = rows.find((x) => x.id === selectedId);
+      const cur = (filter === "diagnostic" ? diagnosticRows : rows).find((x) => x.id === selectedId);
       const box = $("preview");
       if (!cur) {
         box.textContent = "Select a row to preview.";
@@ -397,6 +412,7 @@ function videoIdFromStoredUrl2(url) {
       box.innerHTML =
         `${esc(cur.date)} ${esc(cur.time)}<br>` +
         `${esc(cur.title || "")}<br>` +
+        (cur.diagnostic ? `${esc(cur.diagnostic.author || "")}<br>${esc(cur.diagnostic.text || "")}<br>Parent ID: ${esc(cur.diagnostic.parentId || "")}<br>Candidate hrefs: ${esc((cur.diagnostic.candidateHrefs || []).join(" | "))}<br>` : "") +
         `<button type="button" id="copyUrlBtn" class="copy-url">[copy to clip]</button> ${esc(url)}`;
       const btn = $("copyUrlBtn");
       if (!btn) return;
@@ -431,8 +447,9 @@ function videoIdFromStoredUrl2(url) {
       const foldQuery = String(q || "").trim().toLowerCase();
       if (lastFoldQuery !== null && foldQuery !== lastFoldQuery) foldedVideos.clear();
       lastFoldQuery = foldQuery;
-      matched = rows.filter((r) => matchRow(r, q));
-      matched = onlyNewestTitlePerDay(matched);
+      const sourceRows = filter === "diagnostic" ? diagnosticRows : rows;
+      matched = sourceRows.filter((r) => matchRow(r, q));
+      if (filter !== "diagnostic") matched = onlyNewestTitlePerDay(matched);
       rebuildFirstRowMap();
       setSeek(100, "Seek 100% · " + matched.length);
       renderSlice(true);
@@ -768,6 +785,65 @@ function videoIdFromStoredUrl2(url) {
       recentSearchesSelect.options[0].textContent = `Recent searches (${recentSearchPatterns.length}/${MAX_RECENT_SEARCHES})`;
     });
     loadRecentSearches();
+    void loadDiagnosticSetting();
+    void loadDiagnosticRows();
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes.vulDiagnosticItems) void loadDiagnosticRows();
+    });
+
+    async function loadDiagnosticRows() {
+      try {
+        const bag = await chrome.storage.local.get({ vulDiagnosticItems: [], vulDiagnosticLoggingEnabled: true });
+        diagnosticLoggingEnabled = bag.vulDiagnosticLoggingEnabled !== false;
+        diagnosticRows = (Array.isArray(bag.vulDiagnosticItems) ? bag.vulDiagnosticItems : []).map((d, i) => ({
+          id: -(i + 1), date: new Date(d.createdAt || Date.now()).toLocaleDateString(),
+          time: new Date(d.createdAt || Date.now()).toLocaleTimeString(),
+          title: "[Diagnostic] " + (d.reason || "Unresolved item"),
+          url: d.sourceUrl || "", comments: d.text || "", diagnostic: d
+        }));
+        const count = $("diagnosticCount");
+        if (count) count.textContent = String(diagnosticRows.length);
+        if (filter === "diagnostic") seek($("q").value.trim().toLowerCase());
+      } catch (_) {}
+    }
+    async function loadDiagnosticSetting() {
+      try {
+        const bag = await chrome.storage.local.get({ vulDiagnosticLoggingEnabled: true });
+        diagnosticLoggingEnabled = bag.vulDiagnosticLoggingEnabled !== false;
+        $("diagnosticLoggingEnabled").checked = diagnosticLoggingEnabled;
+      } catch (_) {}
+    }
+    $("diagnosticLoggingEnabled").addEventListener("change", async () => {
+      diagnosticLoggingEnabled = $("diagnosticLoggingEnabled").checked;
+      await chrome.storage.local.set({ vulDiagnosticLoggingEnabled: diagnosticLoggingEnabled });
+    });
+    $("diagnosticConfigClose").addEventListener("click", () => $("diagnosticConfigDlg").classList.remove("on"));
+    $("commentHashConfigCancel").addEventListener("click", () => $("commentHashConfigDlg").classList.remove("on"));
+    $("commentHashConfigSave").addEventListener("click", async () => {
+      const policy = $("commentHashPolicy").value.trim() || DEFAULT_COMMENT_HASH_POLICY;
+      await chrome.storage.local.set({ vulCommentHashPolicy: policy });
+      $("commentHashConfigDlg").classList.remove("on");
+      $("status").textContent = "Extraction rules saved. Open YouTube tabs will pick them up automatically.";
+    });
+    document.querySelector(".side").addEventListener("contextmenu", async (e) => {
+      const el = e.target.closest("[data-filter]");
+      if (!el || !["all", "diagnostic"].includes(el.dataset.filter)) return;
+      e.preventDefault();
+      if (el.dataset.filter === "all") {
+        showMenu(e.clientX, e.clientY, [{ label: "Config…", run: async () => {
+          const bag = await chrome.storage.local.get({ vulCommentHashPolicy: DEFAULT_COMMENT_HASH_POLICY });
+          $("commentHashPolicy").value = bag.vulCommentHashPolicy;
+          $("commentHashConfigDlg").classList.add("on");
+        }}]);
+      } else {
+        await loadDiagnosticSetting();
+        showMenu(e.clientX, e.clientY, [{ label: (diagnosticLoggingEnabled ? "☑" : "☐") + " Log diagnostic items", run: async () => {
+          diagnosticLoggingEnabled = !diagnosticLoggingEnabled;
+          await chrome.storage.local.set({ vulDiagnosticLoggingEnabled: diagnosticLoggingEnabled });
+          await loadDiagnosticSetting();
+        }}]);
+      }
+    });
 
     document.querySelector(".side").addEventListener("click", (e) => {
       const el = e.target.closest("[data-filter]");
@@ -775,6 +851,7 @@ function videoIdFromStoredUrl2(url) {
       document.querySelectorAll(".side [data-filter]").forEach((x) => x.classList.remove("on"));
       el.classList.add("on");
       filter = el.dataset.filter;
+      if (filter === "diagnostic") void loadDiagnosticRows();
       seek($("q").value.trim().toLowerCase());
     });
 
