@@ -1,4 +1,4 @@
-# Visit URL Logger — Concise User Guide
+# Visit URL Logger 
 
 **Purpose:** Record browsing history, organize YouTube visits, extract YouTube comments and uploader posts, and search, review, export, or import the collected data.
 
