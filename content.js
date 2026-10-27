@@ -388,4 +388,4 @@ if (0) document.addEventListener("yt-navigate-finish", () => {
 if (0) window.addEventListener("scroll", () => scheduleFlush(300), { passive: true });
 if (0) window.addEventListener("load", arm);
 //setInterval(scheduleFlush, 500);
-setInterval(scheduleFlush, 500);
+setInterval(scheduleFlush, 1000);
